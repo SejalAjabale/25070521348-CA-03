@@ -1,6 +1,7 @@
 {
   "name": "car-wash-frontend",
   "version": "0.1.0",
+  "homepage": "https://sejalajabale.github.io/25070521348-CA-03",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.2",
