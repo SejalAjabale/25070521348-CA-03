@@ -1,232 +1,279 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Car, Calendar, Clock, History, CheckCircle, Hourglass, PlusCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import apiClient from './api/apiClient';
+import Navbar from './components/Navbar';
+import BookingForm from './components/BookingForm';
+import BookingHistory from './components/BookingHistory';
+import ServicePackages from './components/ServicePackages';
+import AboutSection from './components/AboutSection';
+import LoginModal from './components/LoginModal';
+import SignupModal from './components/SignupModal';
+import ProfileModal from './components/ProfileModal';
+import Toast from './components/Toast';
+import { Hourglass, CheckCircle, Calendar, Activity } from 'lucide-react';
 import './App.css';
 
-function App() {
+function MainApp() {
+  const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('book');
   const [bookings, setBookings] = useState([]);
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    carModel: '',
-    serviceType: 'Ceramic Detail Wash',
-    date: '',
-    timeSlot: '10:00 AM'
+  const [stats, setStats] = useState({
+    total: 0,
+    pending: 0,
+    inProgress: 0,
+    completed: 0,
+    cancelled: 0,
+    totalRevenue: 0
   });
-  const [statusMsg, setStatusMsg] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [preselectedPackage, setPreselectedPackage] = useState('Ceramic Detail Wash');
 
-  // Fetch all bookings from backend
-  const fetchBookings = async () => {
+  // Modals state
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
+  const [isSignupOpen, setIsSignupOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // Toast notification state
+  const [toast, setToast] = useState({ message: '', type: 'success' });
+
+  // Guest booking lookup state
+  const [guestEmail, setGuestEmail] = useState('');
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast({ message: '', type: 'success' });
+    }, 4500);
+  };
+
+  // Fetch bookings from backend API
+  const fetchBookings = useCallback(async (customEmail) => {
+    setLoading(true);
     try {
-      const res = await axios.get('http://localhost:5000/api/bookings');
-      setBookings(res.data);
+      let url = '/bookings';
+      const searchEmail = customEmail || guestEmail;
+      if (!isAuthenticated && searchEmail) {
+        url += `?email=${encodeURIComponent(searchEmail.trim())}`;
+      }
+      const res = await apiClient.get(url);
+      if (res && res.data) {
+        setBookings(Array.isArray(res.data) ? res.data : []);
+      }
     } catch (err) {
       console.error('Error fetching bookings:', err);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [isAuthenticated, guestEmail]);
+
+  // Fetch dashboard statistics
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/bookings/stats');
+      if (res && res.data) {
+        setStats(res.data);
+      }
+    } catch (err) {
+      console.error('Error fetching stats:', err);
+    }
+  }, []);
 
   useEffect(() => {
     fetchBookings();
-  }, []);
-
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await axios.post('http://localhost:5000/api/bookings', formData);
-      setStatusMsg('Appointment successfully scheduled!');
-      setFormData({
-        name: '',
-        email: '',
-        phone: '',
-        carModel: '',
-        serviceType: 'Ceramic Detail Wash',
-        date: '',
-        timeSlot: '10:00 AM'
-      });
-      fetchBookings();
-      setTimeout(() => setStatusMsg(''), 4000);
-    } catch (err) {
-      setStatusMsg('Failed to create booking.');
-    }
-  };
+    fetchStats();
+  }, [fetchBookings, fetchStats, isAuthenticated]);
 
   const handleStatusChange = async (id, status) => {
     try {
-      await axios.patch(`http://localhost:5000/api/bookings/${id}/status`, { status });
+      await apiClient.patch(`/bookings/${id}/status`, { status });
+      showToast(`Appointment status updated to ${status}.`);
       fetchBookings();
+      fetchStats();
     } catch (err) {
       console.error('Error updating status:', err);
+      showToast(err.response?.data?.message || 'Failed to update status.', 'error');
     }
   };
 
-  // Metrics computation
-  const pendingCount = bookings.filter(b => b.status === 'Pending').length;
-  const completedCount = bookings.filter(b => b.status === 'Completed').length;
+  const handleDeleteBooking = async (id) => {
+    try {
+      await apiClient.delete(`/bookings/${id}`);
+      showToast('Appointment record removed.');
+      fetchBookings();
+      fetchStats();
+    } catch (err) {
+      console.error('Error deleting booking:', err);
+      showToast(err.response?.data?.message || 'Failed to remove booking.', 'error');
+    }
+  };
+
+  const handleSelectPackageFromCards = (pkgName) => {
+    setPreselectedPackage(pkgName);
+    setActiveTab('book');
+    showToast(`Selected ${pkgName} package. Ready to pick date!`, 'info');
+  };
+
+  const handleGuestLookup = (e) => {
+    e.preventDefault();
+    if (guestEmail.trim()) {
+      fetchBookings(guestEmail.trim());
+      showToast(`Filtered bookings for ${guestEmail}`);
+    }
+  };
 
   return (
     <div className="app-container">
+      {/* Toast Notification */}
+      {toast.message && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast({ message: '', type: 'success' })}
+        />
+      )}
+
       {/* Top Navbar */}
-      <header className="header">
-        <div className="logo">
-          <Car size={32} /> APEX DETAILED WASH
-        </div>
-        <div className="nav-tabs">
-          <button 
-            className={`tab-btn ${activeTab === 'book' ? 'active' : ''}`}
-            onClick={() => setActiveTab('book')}
-          >
-            <PlusCircle size={18} /> Book Appointment
-          </button>
-          <button 
-            className={`tab-btn ${activeTab === 'history' ? 'active' : ''}`}
-            onClick={() => setActiveTab('history')}
-          >
-            <History size={18} /> Booking History
-          </button>
-        </div>
-      </header>
+      <Navbar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onOpenLogin={() => setIsLoginOpen(true)}
+        onOpenSignup={() => setIsSignupOpen(true)}
+        onOpenProfile={() => setIsProfileOpen(true)}
+        onNotify={showToast}
+      />
 
-      {/* Metrics Counter Section */}
-      <div className="stats-grid">
+      {/* Hero / Quick Stats Grid */}
+      <section className="stats-grid" aria-label="Appointment Metrics">
         <div className="stat-card">
-          <div className="stat-icon"><Hourglass size={24} /></div>
+          <div className="stat-icon icon-pending">
+            <Hourglass size={22} />
+          </div>
           <div>
-            <div className="stat-val">{pendingCount}</div>
-            <div className="stat-label">Pending Appointments</div>
+            <div className="stat-val">{stats.pending}</div>
+            <div className="stat-label">Pending Washes</div>
           </div>
         </div>
+
         <div className="stat-card">
-          <div className="stat-icon"><CheckCircle size={24} /></div>
+          <div className="stat-icon icon-progress">
+            <Activity size={22} />
+          </div>
           <div>
-            <div className="stat-val">{completedCount}</div>
-            <div className="stat-label">Completed Washes</div>
+            <div className="stat-val">{stats.inProgress}</div>
+            <div className="stat-label">In Bay Now</div>
           </div>
         </div>
+
         <div className="stat-card">
-          <div className="stat-icon"><Calendar size={24} /></div>
+          <div className="stat-icon icon-completed">
+            <CheckCircle size={22} />
+          </div>
           <div>
-            <div className="stat-val">{bookings.length}</div>
-            <div className="stat-label">Total Bookings</div>
+            <div className="stat-val">{stats.completed}</div>
+            <div className="stat-label">Delivered Shiny</div>
           </div>
         </div>
-      </div>
 
-      {/* Tab 1: Booking Form */}
-      {activeTab === 'book' && (
-        <div className="glass-panel">
-          <h2 className="panel-title"><Car size={22} /> Reserve Your Wash Slot</h2>
-          {statusMsg && <div style={{ color: '#00f2fe', marginBottom: '15px' }}>{statusMsg}</div>}
-          <form onSubmit={handleSubmit} className="form-grid">
-            <div className="form-group">
-              <label>Full Name</label>
-              <input type="text" name="name" value={formData.name} onChange={handleChange} required placeholder="Alex Mercer" />
-            </div>
-
-            <div className="form-group">
-              <label>Email Address</label>
-              <input type="email" name="email" value={formData.email} onChange={handleChange} required placeholder="alex@example.com" />
-            </div>
-
-            <div className="form-group">
-              <label>Phone Number</label>
-              <input type="tel" name="phone" value={formData.phone} onChange={handleChange} required placeholder="+1 555-0199" />
-            </div>
-
-            <div className="form-group">
-              <label>Car Model & Make</label>
-              <input type="text" name="carModel" value={formData.carModel} onChange={handleChange} required placeholder="Porsche 911 GT3" />
-            </div>
-
-            <div className="form-group">
-              <label>Service Package</label>
-              <select name="serviceType" value={formData.serviceType} onChange={handleChange}>
-                <option value="Express Wash">Express Wash ($30)</option>
-                <option value="Ceramic Detail Wash">Ceramic Detail Wash ($65)</option>
-                <option value="Interior & Exterior Deep Spa">Interior & Exterior Spa ($120)</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label>Appointment Date</label>
-              <input type="date" name="date" value={formData.date} onChange={handleChange} required />
-            </div>
-
-            <div className="form-group">
-              <label>Time Slot</label>
-              <select name="timeSlot" value={formData.timeSlot} onChange={handleChange}>
-                <option value="09:00 AM">09:00 AM</option>
-                <option value="11:00 AM">11:00 AM</option>
-                <option value="01:30 PM">01:30 PM</option>
-                <option value="04:00 PM">04:00 PM</option>
-              </select>
-            </div>
-
-            <button type="submit" className="btn-primary">Confirm Reservation</button>
-          </form>
-        </div>
-      )}
-
-      {/* Tab 2: Booking History & Status Management */}
-      {activeTab === 'history' && (
-        <div className="glass-panel">
-          <h2 className="panel-title"><History size={22} /> Appointment History & Logs</h2>
-          <div className="table-wrapper">
-            <table className="custom-table">
-              <thead>
-                <tr>
-                  <th>Customer</th>
-                  <th>Vehicle</th>
-                  <th>Service</th>
-                  <th>Date & Time</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bookings.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" style={{ textAlign: 'center', color: '#94a3b8' }}>No appointments booked yet.</td>
-                  </tr>
-                ) : (
-                  bookings.map((item) => (
-                    <tr key={item._id}>
-                      <td>
-                        <strong>{item.name}</strong><br />
-                        <span style={{ fontSize: '12px', color: '#94a3b8' }}>{item.phone}</span>
-                      </td>
-                      <td>{item.carModel}</td>
-                      <td>{item.serviceType}</td>
-                      <td>{item.date} at {item.timeSlot}</td>
-                      <td>
-                        <span className={`badge ${item.status === 'Pending' ? 'badge-pending' : 'badge-completed'}`}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td>
-                        {item.status === 'Pending' && (
-                          <button 
-                            className="status-btn"
-                            onClick={() => handleStatusChange(item._id, 'Completed')}
-                          >
-                            Mark Completed
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+        <div className="stat-card">
+          <div className="stat-icon icon-total">
+            <Calendar size={22} />
+          </div>
+          <div>
+            <div className="stat-val">{stats.total}</div>
+            <div className="stat-label">Total Appointments</div>
           </div>
         </div>
-      )}
+      </section>
+
+      {/* Active Tab Views */}
+      <main className="tab-content-area">
+        {activeTab === 'book' && (
+          <BookingForm
+            preselectedPackage={preselectedPackage}
+            onBookingCreated={(msg) => {
+              showToast(msg);
+              fetchBookings();
+              fetchStats();
+            }}
+            onNavigateToHistory={() => setActiveTab('history')}
+          />
+        )}
+
+        {activeTab === 'history' && (
+          <BookingHistory
+            bookings={bookings}
+            loading={loading}
+            onRefresh={() => {
+              fetchBookings();
+              fetchStats();
+              showToast('Refreshed appointment list', 'info');
+            }}
+            onStatusChange={handleStatusChange}
+            onDeleteBooking={handleDeleteBooking}
+            guestEmail={guestEmail}
+            setGuestEmail={setGuestEmail}
+            onGuestLookup={handleGuestLookup}
+          />
+        )}
+
+        {activeTab === 'packages' && (
+          <ServicePackages onSelectPackage={handleSelectPackageFromCards} />
+        )}
+
+        {activeTab === 'about' && <AboutSection />}
+      </main>
+
+      {/* Footer */}
+      <footer className="app-footer">
+        <div className="footer-content">
+          <p>© {new Date().getFullYear()} Apex Detailed Wash. High Performance Automotive Care.</p>
+          <div className="footer-links">
+            <button type="button" onClick={() => setActiveTab('packages')}>Packages</button>
+            <span>•</span>
+            <button type="button" onClick={() => setActiveTab('about')}>Craftsmanship</button>
+            <span>•</span>
+            <button type="button" onClick={() => setActiveTab('book')}>Schedule</button>
+          </div>
+        </div>
+      </footer>
+
+      {/* Modals */}
+      <LoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+        onSwitchToSignup={() => setIsSignupOpen(true)}
+        onSuccess={(msg) => {
+          showToast(msg);
+          fetchBookings();
+          fetchStats();
+        }}
+      />
+
+      <SignupModal
+        isOpen={isSignupOpen}
+        onClose={() => setIsSignupOpen(false)}
+        onSwitchToLogin={() => setIsLoginOpen(true)}
+        onSuccess={(msg) => {
+          showToast(msg);
+          fetchBookings();
+          fetchStats();
+        }}
+      />
+
+      <ProfileModal
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        onNotify={showToast}
+      />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
 
